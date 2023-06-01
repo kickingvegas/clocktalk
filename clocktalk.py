@@ -21,10 +21,11 @@ import argparse
 import subprocess
 import json
 import plistlib
+import shutil
 from enum import Enum
 from tempfile import NamedTemporaryFile
 
-CLOCKTALK_VERSION="0.1.1"
+CLOCKTALK_VERSION="0.1.2"
 
 DOMAIN = "com.apple.speech.synthesis.general.prefs"
 
@@ -86,11 +87,19 @@ class CommandLineParser:
             """.format(DOMAIN))
 
         add_argument = self.parser.add_argument
+
+        add_argument('-d', '--debug',
+                     action='store_true',
+                     default=False,
+                     help="""debug mode; temp.plist will be created if --execute
+                     flag is present""")
                 
-        add_argument('-v', '--version',
-                     action='version',
-                     version=CLOCKTALK_VERSION,
-                     help='print version information and exit')
+        add_argument('-e', '--enable',
+                     action='store_true',
+                     default=False,
+                     help="""enable periodic time announcements (default
+                     is disabled if not present)
+                     """)
 
         add_argument('-p', '--period',
                      action='store',
@@ -103,24 +112,22 @@ class CommandLineParser:
                      help="""read current configuration (all other arguments
                      ignored)""")
 
-        add_argument('-e', '--enable',
-                     action='store_true',
-                     default=False,
-                     help="""enable periodic time announcements (default
-                     is disabled if not present)
-                     """)
-
+        add_argument('-R', '--rate',
+                     action='store',
+                     type=rate_float_type,
+                     help="""set speech rate from 0.5 to 2.0 (disabled if not present)""")
+        
+        add_argument('-v', '--version',
+                     action='version',
+                     version=CLOCKTALK_VERSION,
+                     help='print version information and exit')
+        
         add_argument('-V', '--volume',
                      action='store',
                      type=volume_float_type,
                      default=0.5,
                      help="""set volume from 0.3 to 1.0 (default 0.5 if not present)""")
 
-        add_argument('-R', '--rate',
-                     action='store',
-                     type=rate_float_type,
-                     help="""set speech rate from 0.5 to 2.0 (disabled if not present)""")
-                
         add_argument('-x', '--execute',
                      action='store_true',
                      help='when present, execute the acutal `defaults` command')
@@ -166,6 +173,9 @@ class ClockTalk:
             if status != 0:
                 trapUnexpectedCondition('Error',
                                         'call to defaults failed. {0}'.format(' '.join(cmdList)))
+
+            if self.parsedArguments.debug:
+                shutil.copyfile(outfileName, 'temp.plist')
                 
             if outfileName and os.path.exists(outfileName):
                 os.unlink(outfileName)
