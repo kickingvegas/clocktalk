@@ -17,13 +17,15 @@
 
 import os
 import sys
-import getopt
 import argparse
 import subprocess
+import json
+import plistlib
 import shutil
 from enum import Enum
+from tempfile import NamedTemporaryFile
 
-CLOCKTALK_VERSION="0.1.0"
+CLOCKTALK_VERSION="0.1.2"
 
 DOMAIN = "com.apple.speech.synthesis.general.prefs"
 
@@ -32,26 +34,47 @@ def trapUnexpectedCondition(condition, message, exitStatus=1):
                                                      message=message))
     sys.exit(exitStatus)
 
-
 class AnnouncePeriod(Enum):
     HOUR = "EveryHourInterval"
     HALF = "EveryHalfHourInterval"
     QUARTER = "EveryQuarterHourInterval"
 
 
+def floatBoundsTest(f, min=0.0, max=1.0, minInclusive=True, maxInclusive=True):
+    if (minInclusive == False) and (maxInclusive == False):
+        return (min < f < max)
+    elif (minInclusive == False) and (maxInclusive == True):
+        return (min < f <= max)
+    elif (minInclusive == True) and (maxInclusive == False):
+        return (min <= f < max)
+    elif (minInclusive == True) and (maxInclusive == True):
+        return (min <= f <= max)
+    else:
+        trapUnexpectedCondition('Error',
+                                'floatBoundsTest failure: {0}, ({1}, {2})'
+                                .format(f, min, max))
+    
 def volume_float_type(arg):
     """ Type function for argparse - a float within some predefined bounds """
+    min = 0.3
+    max = 1.0
+    return generic_float_type(arg, min, max)
+
+def rate_float_type(arg):
+    """ Type function for argparse - a float within some predefined bounds """
+    min = 0.5
+    max = 2.0
+    return generic_float_type(arg, min, max)
+
+def generic_float_type(arg, min, max):
     try:
         f = float(arg)
     except ValueError:    
         raise argparse.ArgumentTypeError("Must be a floating point number")
     
-    if 0.0 < f <= 1.0:
-        pass
-    else:
-        raise argparse.ArgumentTypeError("Argument must be within ({0}, {1}]".format(str(0.0), str(1.0)))
+    if not floatBoundsTest(f, min=min, max=max):
+        raise argparse.ArgumentTypeError("Argument must be within [{0}, {1}]".format(str(min), str(max)))
     return f    
-
 
 class CommandLineParser:
     def __init__(self):
@@ -63,13 +86,20 @@ class CommandLineParser:
             `defaults` to configure the domain `{0}`.
             """.format(DOMAIN))
 
-        
         add_argument = self.parser.add_argument
+
+        add_argument('-d', '--debug',
+                     action='store_true',
+                     default=False,
+                     help="""debug mode; temp.plist will be created if --execute
+                     flag is present""")
                 
-        add_argument('-v', '--version',
-                     action='version',
-                     version=CLOCKTALK_VERSION,
-                     help='print version information and exit')
+        add_argument('-e', '--enable',
+                     action='store_true',
+                     default=False,
+                     help="""enable periodic time announcements (default
+                     is disabled if not present)
+                     """)
 
         add_argument('-p', '--period',
                      action='store',
@@ -82,19 +112,22 @@ class CommandLineParser:
                      help="""read current configuration (all other arguments
                      ignored)""")
 
-        add_argument('-e', '--enable',
-                     action='store_true',
-                     help="""enable periodic time announcements (default
-                     is disabled if not present)
-                     """)
-
+        add_argument('-R', '--rate',
+                     action='store',
+                     type=rate_float_type,
+                     help="""set speech rate from 0.5 to 2.0 (disabled if not present)""")
+        
+        add_argument('-v', '--version',
+                     action='version',
+                     version=CLOCKTALK_VERSION,
+                     help='print version information and exit')
+        
         add_argument('-V', '--volume',
                      action='store',
                      type=volume_float_type,
                      default=0.5,
-                     help="""set volume from 0.0 to 1.0 (default 0.5 if not present)""")
+                     help="""set volume from 0.3 to 1.0 (default 0.5 if not present)""")
 
-                
         add_argument('-x', '--execute',
                      action='store_true',
                      help='when present, execute the acutal `defaults` command')
@@ -110,8 +143,7 @@ class ClockTalk:
         self.stderr = sys.stderr
         self.domain = DOMAIN
         self.parsedArguments = parsedArguments
-        self.template = """{{ TimeAnnouncementPrefs = {{ TimeAnnouncementsEnabled = {enabled}; TimeAnnouncementsIntervalIdentifier = {interval}; TimeAnnouncementsPhraseIdentifier = ShortTime; TimeAnnouncementsVoiceSettings = {{ CustomVolume = \"{volume}\"; }};}};}}"""
-                
+        
     def run(self):
         cmdList = ['/usr/bin/defaults']
 
@@ -126,42 +158,83 @@ class ClockTalk:
             sys.exit(status)
 
         ## write operations
-
-        plist = self.template.format(enabled=self.enabled(),
-                                     interval=self.period().value,
-                                     volume=self.parsedArguments.volume)
-
-        cmdList.append('write')
-        cmdList.append(self.domain)
-        cmdList.append("{0}".format(plist))
+        plistDict = self.domainDict(self.parsedArguments.enable,
+                                    self.interval(self.parsedArguments.period),
+                                    self.parsedArguments.volume,
+                                    self.parsedArguments.rate)
 
         if self.parsedArguments.execute:
+            outfileName = self.writePlistFile(plistDict)
+            cmdList.append('import')
+            cmdList.append(self.domain)
+            cmdList.append(outfileName)
+            
             status = subprocess.call(cmdList, stdout=self.stdout)
+            if status != 0:
+                trapUnexpectedCondition('Error',
+                                        'call to defaults failed. {0}'.format(' '.join(cmdList)))
+
+            if self.parsedArguments.debug:
+                shutil.copyfile(outfileName, 'temp.plist')
+                
+            if outfileName and os.path.exists(outfileName):
+                os.unlink(outfileName)
+            
             # wrap up 
             if self.stdout != sys.stdout:
                 self.stdout.close()
+
+        else:
+            sys.stdout.write(json.dumps(plistDict, indent=4) + '\n')
+
+    def interval(self, argPeriod):
+        result = None
+        if argPeriod == 'hour':
+            result = AnnouncePeriod.HOUR
+        elif argPeriod == 'half':
+            result = AnnouncePeriod.HALF
+        elif argPeriod == 'quarter':
+            result = AnnouncePeriod.QUARTER
+        else:
+            trapUnexpectedCondition("Error", "interval is not defined.")
             
-        else:
-            sys.stdout.write(' '.join(cmdList) + '\n')
+        return result.value
+
+    def domainDict(self,
+                   timeAnnouncementEnabled,
+                   interval,
+                   volume,
+                   rate):
+        plistDict = {}
+        plistDict['TimeAnnouncementPrefs'] = {
+            'TimeAnnouncementsEnabled': timeAnnouncementEnabled,
+            'TimeAnnouncementsIntervalIdentifier': interval,
+            'TimeAnnouncementsPhraseIdentifier' : 'ShortTime',
+            'TimeAnnouncementsVoiceSettings': {
+                'CustomVolume': volume
+            }
+        }
+
+        if rate is not None:
+            voiceSettings = plistDict['TimeAnnouncementPrefs']['TimeAnnouncementsVoiceSettings']
+            voiceSettings['CustomRelativeRate'] = rate
+            
+        return plistDict
 
 
-    def period(self):
-        period = None
-        if self.parsedArguments.period == 'hour':
-            period = AnnouncePeriod.HOUR
-        elif self.parsedArguments.period == 'half':
-            period = AnnouncePeriod.HALF
-        elif self.parsedArguments.period == 'quarter':
-            period = AnnouncePeriod.QUARTER
-        else:
-            trapUnexpectedCondition("Error", "period is not defined.")
+    def writePlistFile(self, plistDict):
+        outfileName = None
 
-        return period
+        with NamedTemporaryFile(mode='wb',
+                                prefix='clocktalk_',
+                                suffix='.plist',
+                                delete=False) as outfile:
+            plistlib.dump(plistDict, outfile)
+            outfileName = outfile.name
+            #print('outfile name: {}'.format(outfileName))
 
-
-    def enabled(self):
-        result = 1 if self.parsedArguments.enable else 0
-        return result
+        return outfileName
+    
         
 if __name__ == '__main__':
     app = ClockTalk(CommandLineParser().run())

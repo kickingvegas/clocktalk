@@ -1,5 +1,9 @@
 # clocktalk  - Command line utility to configure and enable periodic macOS time announcements
 
+# WARNING
+
+This code as it stands is WIP and does not work. In particular it is being blocked by an issue with macOS that has a feedback submitted as described in <https://github.com/kickingvegas/clocktalk/issues/1>. 
+
 # Summary
 
 `clocktalk` is a command line utility to configure and enable periodic time announcements (usually by the hour) via macOS speech synthesis. Typically this setting is accessed via the macOS GUI **Settings** app which on Ventura 13.4+ is located at *Control Center > Clock > Clock Options > Announce the time*. 
@@ -11,19 +15,21 @@ Because `clocktalk` is a command line utility, it can be automated using `launch
 # Usage
 
 ```Shell
-usage: clocktalk [-h] [-v] [-p {hour,half,quarter}] [-r] [-e] [-V VOLUME] [-x]
+usage: clocktalk [-h] [-d] [-e] [-p {hour,half,quarter}] [-r] [-R RATE] [-v] [-V VOLUME] [-x]
 
 Command line utility to configure and enable periodic macOS time announcements.
 
 options:
   -h, --help            show this help message and exit
-  -v, --version         print version information and exit
+  -d, --debug           debug mode; temp.plist will be created if --execute flag is present
+  -e, --enable          enable periodic time announcements (default is disabled if not present)
   -p {hour,half,quarter}, --period {hour,half,quarter}
                         period to annouce time (default hour)
   -r, --read            read current configuration (all other arguments ignored)
-  -e, --enable          enable periodic time announcements (default is disabled if not present)
+  -R RATE, --rate RATE  set speech rate from 0.5 to 2.0 (disabled if not present)
+  -v, --version         print version information and exit
   -V VOLUME, --volume VOLUME
-                        set volume from 0.0 to 1.0 (default 0.5 if not present)
+                        set volume from 0.3 to 1.0 (default 0.5 if not present)
   -x, --execute         when present, execute the acutal `defaults` command
 
 This is a wrapper script around the command line tool `defaults` to configure the domain `com.apple.speech.synthesis.general.prefs`.
