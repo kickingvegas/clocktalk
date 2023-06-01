@@ -17,17 +17,13 @@
 
 import os
 import sys
-import getopt
 import argparse
 import subprocess
-import shutil
 import json
 import plistlib
 from enum import Enum
 
 GENCLOCKTALKD_VERSION="0.1.0"
-
-DOMAIN = "com.apple.speech.synthesis.general.prefs"
 
 def trapUnexpectedCondition(condition, message, exitStatus=1):
     sys.stderr.write("{condition}: {message}\n".format(condition=condition,
@@ -122,7 +118,6 @@ class GenClockTalkD:
         self.stdout = sys.stdout
         self.stdin = sys.stdin
         self.stderr = sys.stderr
-        self.domain = DOMAIN
         self.parsedArguments = parsedArguments
                 
     def run(self):

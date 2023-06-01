@@ -54,8 +54,8 @@ unload:
 	launchctl unload $(INSTALL_DIR)/$(LABEL_PREFIX)-stop.plist
 
 status:
-	launchctl list $(LABEL_PREFIX)-start
-	launchctl list $(LABEL_PREFIX)-stop
+	- launchctl list $(LABEL_PREFIX)-start
+	- launchctl list $(LABEL_PREFIX)-stop
 
 list:
 	plutil -convert json $(INSTALL_DIR)/$(LABEL_PREFIX)-start.plist -o - | python3 -m json.tool
